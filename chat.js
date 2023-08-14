@@ -14,7 +14,7 @@ const readlineInterface = rl.createInterface({
 });
 
 // Defining login credentials
-const username = "del19019";
+const username = "dele19019";
 const password = "1234";
 const domain = 'alumchat.xyz';
 
@@ -198,9 +198,9 @@ function loggedInMenu() {
     console.log("\nLogged In Menu:");
     console.log("1. Check online users");
     console.log('2. Delete Account');
-    console.log("3. Exit");
+    console.log("3. Logout");
 
-    prompt('Choose an option (1, 2): ', (answer) => {
+    prompt('Choose an option (1, 2, 3): ', (answer) => {
         switch (answer) {
             case '1':
                 checkOnlineUsers();  // Checks online users
@@ -209,9 +209,7 @@ function loggedInMenu() {
                 deleteAccount();
                 break;
             case '3':
-                console.log('Exiting.');
-                xmpp.stop();
-                process.exit();
+                logoutSession();
                 break;
             default:
                 console.log("Invalid option.");
@@ -219,6 +217,16 @@ function loggedInMenu() {
                 break;
         }
     });
+}
+
+// Logout
+function logoutSession() {
+    if (xmpp) {
+        xmpp.stop();  // Disconnect the client
+        xmpp = null;  // Reset the client instance
+    }
+    console.log("Logged out successfully.");
+    mainPage();  // Display the very first menu
 }
 
 // Function to fetch the roster
@@ -285,7 +293,7 @@ function checkOnlineUsers() {
 function deleteAccount() {
     prompt("Are you sure you want to delete your account? (yes/no) ", (answer) => {
         if (answer.toLowerCase() === 'yes') {
-            proceedWithAccountDeletion();
+            ifDeleteAccount();
             console.log("Account deleted successfully. Exiting...");
             readlineInterface.close();
             process.exit();  // This will terminate the application.
@@ -296,8 +304,7 @@ function deleteAccount() {
     });
 }
 
-
-function proceedWithAccountDeletion() {
+function ifDeleteAccount() {
     console.log('Deleting account...');
 
     // Create the IQ stanza for account deletion.
