@@ -6,6 +6,7 @@ const readlineSync = require('readline-sync'); // Importing readline-sync packag
 const { xml } = require('@xmpp/client');
 let xmpp; // Global variable for the XMPP client.
 const rl = require('readline'); // Add this import for the asynchronous readline.
+let contacts = [];  // This stores the contacts after fetch the roster
 
 const readlineInterface = rl.createInterface({
     input: process.stdin,
@@ -13,7 +14,7 @@ const readlineInterface = rl.createInterface({
 });
 
 // Defining login credentials
-const username = "dele19019";
+const username = "del19019";
 const password = "1234";
 const domain = 'alumchat.xyz';
 
@@ -141,9 +142,6 @@ function loginExistingUser() {
         return;
     }
 
-    // Disabling the TLS/SSL certificate verification - Use with caution! Only for testing.
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-
     // Using xmpp:// protocol
     xmpp = client({
         service: 'xmpp://alumchat.xyz:5222',
@@ -160,14 +158,29 @@ function loginExistingUser() {
     });
 
     xmpp.on('error', (err) => {
-        console.error('Something went wrong:', err);
+        console.error('Error occurred:', err);
+        if (err && err.condition === 'not-authorized') {
+            console.log('Account doesn\'t exist or wrong credentials provided.');
+        } else {
+            console.log('An unexpected error occurred. Please try again later.');
+        }
+        mainPage();  // Redirect back to main menu for user convenience.
     });
 
     xmpp.on('offline', () => {
         console.log('You are offline now.');
     });
 
+    // Start a timeout to check for prolonged inactivity
+    const timeoutDuration = 10000;  // 10 seconds
+    const timeoutID = setTimeout(() => {
+        console.error('Connection timed out. Please try again later.');
+        xmpp.stop();  // Stop the current XMPP session
+        mainPage();  // Return to the main menu
+    }, timeoutDuration);
+
     xmpp.on('online', async (jid) => {
+        clearTimeout(timeoutID);  // Clear the timeout if we successfully connect
         console.log(`Logged in as ${jid.toString()}`);
         loggedInMenu();
     });
@@ -184,14 +197,18 @@ function loginExistingUser() {
 function loggedInMenu() {
     console.log("\nLogged In Menu:");
     console.log("1. Check online users");
-    console.log("2. Exit");
+    console.log('2. Delete Account');
+    console.log("3. Exit");
 
     prompt('Choose an option (1, 2): ', (answer) => {
         switch (answer) {
             case '1':
-                checkOnlineUsers();
+                checkOnlineUsers();  // Checks online users
                 break;
             case '2':
+                deleteAccount();
+                break;
+            case '3':
                 console.log('Exiting.');
                 xmpp.stop();
                 process.exit();
@@ -204,10 +221,112 @@ function loggedInMenu() {
     });
 }
 
-let contacts = []; // Store the contacts here
+// Function to fetch the roster
+function fetchRoster() {
+    console.log("Fetching online users.");
 
+    const rosterRequest = xml(
+        'iq',
+        { type: 'get', id: 'roster' },
+        xml('query', { xmlns: 'jabber:iq:roster' })
+    );
+
+    xmpp.send(rosterRequest);
+}
+
+// Function to handle the roster response
+function handleRoster(stanza) {
+    if (stanza.is('iq') && stanza.attrs.type === 'result') {
+        const query = stanza.getChild('query', 'jabber:iq:roster');
+        contacts = query.getChildren('item');
+
+        // Display the roster and set up presence listeners
+        displayRosterListeners(contacts);
+
+        // Request presence info for all contacts
+        requestPresence(contacts);
+
+        // Return to the main menu
+        loggedInMenu();
+    }
+}
+
+// Function to display the roster and set up presence listeners
+function displayRosterListeners(contacts) {
+    xmpp.on('presence', (presence) => {
+        const from = presence.attrs.from;
+        const contact = contacts.find(c => c.attrs.jid === from);
+
+        if (!contact) return;
+
+        if (!presence.attrs.type || presence.attrs.type === 'available') {
+            console.log(`${from} is online`);
+        } else if (presence.attrs.type === 'unavailable') {
+            console.log(`${from} is offline`);
+        }
+    });
+}
+
+// Function to request presence for all contacts
+function requestPresence(contacts) {
+    contacts.forEach((contact) => {
+        const jid = contact.attrs.jid;
+        const presenceRequest = xml('presence', { to: jid });
+        xmpp.send(presenceRequest);
+    });
+}
+
+// The refactored checkOnlineUsers function
 function checkOnlineUsers() {
+    fetchRoster();
+    xmpp.once('stanza', handleRoster);
+}
 
+function deleteAccount() {
+    prompt("Are you sure you want to delete your account? (yes/no) ", (answer) => {
+        if (answer.toLowerCase() === 'yes') {
+            proceedWithAccountDeletion();
+            console.log("Account deleted successfully. Exiting...");
+            readlineInterface.close();
+            process.exit();  // This will terminate the application.
+        } else {
+            console.log('Account deletion canceled.');
+            loggedInMenu();
+        }
+    });
+}
+
+
+function proceedWithAccountDeletion() {
+    console.log('Deleting account...');
+
+    // Create the IQ stanza for account deletion.
+    const deleteStanza = xml(
+        'iq',
+        { type: 'set', from: `${username}@${domain}`, id: 'delete1' },
+        xml('query', { xmlns: 'jabber:iq:register' },
+            xml('remove')
+        )
+    );
+
+    xmpp.send(deleteStanza);
+
+    // Handling the server's response
+    xmpp.once('stanza', (stanza) => {
+        if (stanza.is('iq') && stanza.attrs.id === 'delete1') {
+            if (stanza.attrs.type === 'result') {
+                console.log('Account successfully deleted!');
+                // Instead of going to loggedInMenu, exit.
+                console.log('Goodbye!');
+                xmpp.stop();
+                rl.close(); // Close the readline interface
+                process.exit(0); // Exit the application
+            } else if (stanza.attrs.type === 'error') {
+                console.error('Error deleting account:', stanza.toString());
+                loggedInMenu();
+            }
+        }
+    });
 }
 
 //**********************************************/
@@ -221,7 +340,6 @@ function closeChat() {
     process.exit(); // Exiting the process
 }
 
-//**********************************************/
 
 //**********************************************/
 //*************** ABOUT SECTION ****************/
