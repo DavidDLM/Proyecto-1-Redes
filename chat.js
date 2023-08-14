@@ -8,6 +8,7 @@ let xmpp; // Global variable for the XMPP client.
 const rl = require('readline'); // Add this import for the asynchronous readline.
 let contacts = [];  // This stores the contacts after fetch the roster
 let manualLogout = false;
+let userStatuses = {};
 
 const readlineInterface = rl.createInterface({
     input: process.stdin,
@@ -184,7 +185,7 @@ function loginExistingUser() {
     }, timeoutDuration);
 
     xmpp.on('online', async (jid) => {
-        clearTimeout(timeoutID);  // Clear the timeout if we successfully connect
+        clearTimeout(timeoutID);  // Clear the timeout if successfully connect
         console.log(`Logged in as ${jid.toString()}`);
         loggedInMenu();
     });
@@ -200,7 +201,7 @@ function loginExistingUser() {
 
 function loggedInMenu() {
     console.log("\nLogged In Menu:");
-    console.log("1. Check online users");
+    console.log("1. Check users");
     console.log("2. Change online status");
     console.log('3. Delete Account');
     console.log("4. Logout");
@@ -208,7 +209,7 @@ function loggedInMenu() {
     prompt('Choose an option (1, 2, 3, 4): ', (answer) => {
         switch (answer) {
             case '1':
-                checkOnlineUsers();  // Checks online users
+                checkUsers();  // Checks online users
                 break;
             case '2':
                 changeOnlineStatus();
@@ -240,7 +241,7 @@ function logoutSession() {
 
 // Function to fetch the roster
 function fetchRoster() {
-    console.log("Fetching online users.");
+    console.log("Fetching users.");
 
     const rosterRequest = xml(
         'iq',
@@ -268,8 +269,12 @@ function handleRoster(stanza) {
     }
 }
 
-// Function to display the roster and set up presence listeners
 function displayRosterListeners(contacts) {
+    // Initialize the user statuses with 'offline'.
+    contacts.forEach(contact => {
+        userStatuses[contact.attrs.jid] = 'offline';
+    });
+
     xmpp.on('presence', (presence) => {
         const from = presence.attrs.from;
         const contact = contacts.find(c => c.attrs.jid === from);
@@ -277,12 +282,21 @@ function displayRosterListeners(contacts) {
         if (!contact) return;
 
         if (!presence.attrs.type || presence.attrs.type === 'available') {
+            userStatuses[from] = presence.getChildText('show') || 'available'; // Update the status
             console.log(`${from} is online`);
         } else if (presence.attrs.type === 'unavailable') {
+            userStatuses[from] = 'offline'; // Update the status
             console.log(`${from} is offline`);
         }
     });
+
+    // Display all users with their initial statuses.
+    console.log("All users and their status:");
+    for (let jid in userStatuses) {
+        console.log(`${jid}: ${userStatuses[jid]}`);
+    }
 }
+
 
 // Function to request presence for all contacts
 function requestPresence(contacts) {
@@ -293,8 +307,8 @@ function requestPresence(contacts) {
     });
 }
 
-// The refactored checkOnlineUsers function
-function checkOnlineUsers() {
+// The refactored checkUsers function
+function checkUsers() {
     fetchRoster();
     xmpp.once('stanza', handleRoster);
 }
