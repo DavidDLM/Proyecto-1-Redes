@@ -7,6 +7,7 @@ const { xml } = require('@xmpp/client');
 let xmpp; // Global variable for the XMPP client.
 const rl = require('readline'); // Add this import for the asynchronous readline.
 let contacts = [];  // This stores the contacts after fetch the roster
+let manualLogout = false;
 
 const readlineInterface = rl.createInterface({
     input: process.stdin,
@@ -168,7 +169,10 @@ function loginExistingUser() {
     });
 
     xmpp.on('offline', () => {
-        console.log('You are offline now.');
+        if (!manualLogout) {
+            console.log('You are offline now.');
+        }
+        manualLogout = false;  // Reset the flag
     });
 
     // Start a timeout to check for prolonged inactivity
@@ -197,18 +201,22 @@ function loginExistingUser() {
 function loggedInMenu() {
     console.log("\nLogged In Menu:");
     console.log("1. Check online users");
-    console.log('2. Delete Account');
-    console.log("3. Logout");
+    console.log("2. Change online status");
+    console.log('3. Delete Account');
+    console.log("4. Logout");
 
-    prompt('Choose an option (1, 2, 3): ', (answer) => {
+    prompt('Choose an option (1, 2, 3, 4): ', (answer) => {
         switch (answer) {
             case '1':
                 checkOnlineUsers();  // Checks online users
                 break;
             case '2':
-                deleteAccount();
+                changeOnlineStatus();
                 break;
             case '3':
+                deleteAccount();
+                break;
+            case '4':
                 logoutSession();
                 break;
             default:
@@ -222,7 +230,8 @@ function loggedInMenu() {
 // Logout
 function logoutSession() {
     if (xmpp) {
-        xmpp.stop();  // Disconnect the client
+        manualLogout = true;
+        xmpp.stop();  // This will disconnect the client
         xmpp = null;  // Reset the client instance
     }
     console.log("Logged out successfully.");
@@ -335,6 +344,55 @@ function ifDeleteAccount() {
         }
     });
 }
+
+function setStatus(show, statusMessage = '') {
+    const presenceXML = xml(
+        'presence',
+        {},
+        xml('show', {}, show),
+        xml('status', {}, statusMessage)
+    );
+
+    xmpp.send(presenceXML).then(() => {
+        console.log(`Status updated to: ${show} ${statusMessage}`);
+        loggedInMenu();
+    }).catch((err) => {
+        console.error('Error while updating status:', err);
+        loggedInMenu();
+    });
+}
+
+function changeOnlineStatus() {
+    console.log('Choose your online status:');
+    console.log('1. Online');
+    console.log('2. Away');
+    console.log('3. Do not disturb');
+    console.log('4. Set custom message');
+    console.log('5. Go back to the previous menu');
+
+    prompt("Enter your choice (1-5): ", (answer) => {
+        switch (answer) {
+            case '1':
+                setStatus('online');
+                break;
+            case '2':
+                setStatus('away');
+                break;
+            case '3':
+                setStatus('dnd');
+                break;
+            case '4':
+                prompt("Enter your custom message: ", (customMessage) => {
+                    setStatus('online', customMessage);
+                });
+                break;
+            default:
+                loggedInMenu();
+                break;
+        }
+    });
+}
+
 
 //**********************************************/
 //**************** EXIT SECTION ****************/
