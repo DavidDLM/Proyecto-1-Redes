@@ -303,8 +303,6 @@ async function fetchContacts() {
     }
 }
 
-
-
 // Function to handle the roster response and display contact statuses
 function handleRoster(stanza) {
     if (stanza.is('iq') && stanza.attrs.type === 'result') {
@@ -624,6 +622,11 @@ function processRosterStanza(stanza, queriedJID) {
             console.log(`\nDetails for ${queriedJID}:`);
             console.log(`Username: ${contactName}`);
             console.log(`Domain: ${domain}`);
+            // both": You and the contact can see each other's presence status.
+            //"from": You can see the contact's presence status, but they cannot see yours.
+            //"to": The contact can see your presence status, but you cannot see theirs.
+            //"none": Neither you nor the contact can see each other's presence status.
+            console.log(`Added contact: ${matchingContact.attrs.subscription}`);
             // Further contact details can be displayed as required
         } else {
             console.log(`\nThe contact ${queriedJID} is not in your roster.`);
@@ -632,6 +635,7 @@ function processRosterStanza(stanza, queriedJID) {
         manageSubscriptions();  // Navigate back to the Contact Management menu
     }
 }
+
 
 // Function to send roster request to XMPP server
 function initiateRosterRequest(queriedJID) {
@@ -656,7 +660,6 @@ function initiateRosterRequest(queriedJID) {
         });
 }
 
-
 //**********************************************/
 //**************** EXIT SECTION ****************/
 
@@ -667,7 +670,6 @@ function closeChat() {
     console.log("Chat closed. Goodbye!");
     process.exit(); // Exiting the process
 }
-
 
 //**********************************************/
 //*************** ABOUT SECTION ****************/
