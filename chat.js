@@ -9,6 +9,10 @@ const rl = require('readline'); // Add this import for the asynchronous readline
 let contacts = [];  // This stores the contacts after fetch the roster
 let manualLogout = false;
 let userStatuses = {};
+let subscriptions = []; // This will store the JIDs of users who have sent you a friend request.
+let pendingFriendRequests = [];
+
+//const xml = require('@xmpp/xml');
 
 const readlineInterface = rl.createInterface({
     input: process.stdin,
@@ -185,16 +189,30 @@ function loginExistingUser() {
     }, timeoutDuration);
 
     xmpp.on('online', async (jid) => {
-        clearTimeout(timeoutID);  // Clear the timeout if successfully connect
+        clearTimeout(timeoutID);
         console.log(`Logged in as ${jid.toString()}`);
         loggedInMenu();
+
+        // Listen for incoming subscription requests
+        xmpp.on('stanza', async (stanza) => {
+            const fromJid = stanza.attrs.from;
+            if (stanza.is('presence') && stanza.attrs.type === 'subscribe') {
+                subscriptions.push(fromJid); // Store the JID of the user who sent the request.
+
+                console.log(`Received a new subscription request from ${fromJid}.`); // Notify the user in real-time.
+            }
+        });
     });
 
+
+    /** 
     xmpp.on('stanza', async (stanza) => {
+        const fromJid = stanza.attrs.from;
+
         if (stanza.is('message')) {
             // Handle the message...
         }
-    });
+    });*/
 
     xmpp.start().catch(console.error);
 }
@@ -202,22 +220,26 @@ function loginExistingUser() {
 function loggedInMenu() {
     console.log("\nLogged In Menu:");
     console.log("1. Check users");
-    console.log("2. Change online status");
-    console.log('3. Delete Account');
-    console.log("4. Logout");
+    console.log("2. Manage contacts");
+    console.log("3. Change online status");
+    console.log('4. Delete Account');
+    console.log("5. Logout");
 
-    prompt('Choose an option (1, 2, 3, 4): ', (answer) => {
+    prompt('Choose an option (1-5): ', (answer) => {
         switch (answer) {
             case '1':
-                checkUsers();  // Checks online users
+                checkUsers();
                 break;
             case '2':
-                changeOnlineStatus();
+                manageSubscriptions()
                 break;
             case '3':
-                deleteAccount();
+                changeOnlineStatus();
                 break;
             case '4':
+                deleteAccount();
+                break;
+            case '5':
                 logoutSession();
                 break;
             default:
@@ -252,7 +274,7 @@ function fetchRoster() {
     xmpp.send(rosterRequest);
 }
 
-// Function to handle the roster response
+// Function to handle the roster response and display contact statuses
 function handleRoster(stanza) {
     if (stanza.is('iq') && stanza.attrs.type === 'result') {
         const query = stanza.getChild('query', 'jabber:iq:roster');
@@ -283,10 +305,8 @@ function displayRosterListeners(contacts) {
 
         if (!presence.attrs.type || presence.attrs.type === 'available') {
             userStatuses[from] = presence.getChildText('show') || 'available'; // Update the status
-            console.log(`${from} is online`);
         } else if (presence.attrs.type === 'unavailable') {
             userStatuses[from] = 'offline'; // Update the status
-            console.log(`${from} is offline`);
         }
     });
 
@@ -296,7 +316,6 @@ function displayRosterListeners(contacts) {
         console.log(`${jid}: ${userStatuses[jid]}`);
     }
 }
-
 
 // Function to request presence for all contacts
 function requestPresence(contacts) {
@@ -407,6 +426,119 @@ function changeOnlineStatus() {
     });
 }
 
+// Function to send a friend request to another user
+function sendFriendRequest(userJID) {
+    userJID = `${userJID}@alumchat.xyz`;
+    const presence = xml('presence', { to: userJID, type: 'subscribe' });
+
+    return xmpp.send(presence);
+}
+
+// Function to accept a friend request from another user
+function acceptFriendRequest(userRequest) {
+    const acceptUser = `${userRequest}@alumchat.xyz`;
+    const addFriend = subscriptions.find(s => s === acceptUser);
+
+    if (!addFriend) {
+        console.log("No friend request found from the specified person.");
+        return Promise.reject();
+    }
+
+    return xmpp.send(xml('presence', { to: addFriend, type: 'subscribed' })).then(() => {
+        const index = subscriptions.indexOf(addFriend);
+        if (index > -1) subscriptions.splice(index, 1);
+    });
+}
+
+// Function to delete a contact from the user's list
+function deleteContact(userJID) {
+    userJID = `${userJID}@alumchat.xyz`;
+    const presence = xml('presence', { to: userJID, type: 'unsubscribe' });
+
+    return xmpp.send(presence).then(() => {
+        // Construct the XML stanza to remove the user from the roster
+        const removeRosterIQ = xml(
+            'iq',
+            { type: 'set', id: 'remove1' },
+            xml('query', { xmlns: 'jabber:iq:roster' },
+                xml('item', { jid: userJID, subscription: 'remove' })
+            )
+        );
+
+        return xmpp.send(removeRosterIQ);
+    });
+}
+
+function manageSubscriptions() {
+    console.log("\nManage Contacts:");
+    console.log("1. Add a user to my contacts");
+    console.log("2. Accept friend requests");
+    console.log("3. Delete a contact");
+    console.log("4. Go back to the main menu");
+
+    prompt("Choose an option (1-4): ", (answer) => {
+        switch (answer) {
+            case '1':
+                prompt("JID of the user you wish to add: ", (userJID) => {
+                    sendFriendRequest(userJID)
+                        .then(() => {
+                            console.log(`Friend request sent to ${userJID}@alumchat.xyz`);
+                            manageSubscriptions();
+                        })
+                        .catch(err => {
+                            console.error('Error while sending friend request:', err);
+                            manageSubscriptions();
+                        });
+                });
+                break;
+            case '2':
+                if (subscriptions.length === 0) {
+                    console.log("No friend requests to accept.");
+                    manageSubscriptions();
+                } else {
+                    console.log("Received friend requests: ", subscriptions);
+                    prompt("Do you want to accept any request? (yes/no): ", (answer) => {
+                        if (answer.toLowerCase() === 'yes') {
+                            prompt("Enter the name of the person you want to accept: ", (userRequest) => {
+                                acceptFriendRequest(userRequest)
+                                    .then(() => {
+                                        console.log(`Accepted friend request from: ${userRequest}@alumchat.xyz`);
+                                        manageSubscriptions();
+                                    })
+                                    .catch(() => {
+                                        manageSubscriptions();
+                                    });
+                            });
+                        } else {
+                            manageSubscriptions();
+                        }
+                    });
+                }
+                break;
+            case '3':
+                prompt("JID of the user you wish to delete: ", (userJID) => {
+                    deleteContact(userJID)
+                        .then(() => {
+                            console.log(`You have removed ${userJID}@alumchat.xyz from your contacts.`);
+                            manageSubscriptions();
+                        })
+                        .catch(err => {
+                            console.error('Error while deleting contact:', err);
+                            manageSubscriptions();
+                        });
+                });
+                break;
+            case '4':
+                console.log("Returning to the main menu...");
+                loggedInMenu();
+                break;
+            default:
+                console.log("Invalid option.");
+                manageSubscriptions();
+                break;
+        }
+    });
+}
 
 //**********************************************/
 //**************** EXIT SECTION ****************/
