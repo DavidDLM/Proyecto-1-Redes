@@ -217,6 +217,7 @@ function loginExistingUser() {
     xmpp.start().catch(console.error);
 }
 
+// Log in menu
 function loggedInMenu() {
     console.log("\nLogged In Menu:");
     console.log("1. Check users");
@@ -332,6 +333,7 @@ function checkUsers() {
     xmpp.once('stanza', handleRoster);
 }
 
+// Function to delete current account
 function deleteAccount() {
     prompt("Are you sure you want to delete your account? (yes/no) ", (answer) => {
         if (answer.toLowerCase() === 'yes') {
@@ -346,6 +348,7 @@ function deleteAccount() {
     });
 }
 
+// Function to double check delete account
 function ifDeleteAccount() {
     console.log('Deleting account...');
 
@@ -378,6 +381,7 @@ function ifDeleteAccount() {
     });
 }
 
+// Function to set status
 function setStatus(show, statusMessage = '') {
     const presenceXML = xml(
         'presence',
@@ -395,6 +399,7 @@ function setStatus(show, statusMessage = '') {
     });
 }
 
+// Function to change status
 function changeOnlineStatus() {
     console.log('Choose your online status:');
     console.log('1. Online');
@@ -469,14 +474,16 @@ function deleteContact(userJID) {
     });
 }
 
+// Function to manage contacts: add, delete, check details
 function manageSubscriptions() {
     console.log("\nManage Contacts:");
     console.log("1. Add a user to my contacts");
     console.log("2. Accept friend requests");
     console.log("3. Delete a contact");
-    console.log("4. Go back to the main menu");
+    console.log("4. View contact details");
+    console.log("5. Go back to the main menu");
 
-    prompt("Choose an option (1-4): ", (answer) => {
+    prompt("Choose an option (1-5): ", (answer) => {
         switch (answer) {
             case '1':
                 prompt("JID of the user you wish to add: ", (userJID) => {
@@ -529,6 +536,21 @@ function manageSubscriptions() {
                 });
                 break;
             case '4':
+                prompt("Enter the JID or name of the contact you wish to view: ", (userJID) => {
+                    if (!userJID.includes("@")) {
+                        userJID = `${userJID}@alumchat.xyz`;  // Append the domain if only the name is provided
+                    }
+
+                    displayContactDetails(userJID)
+                        .then(() => {
+                            manageSubscriptions();
+                        })
+                        .catch(() => {
+                            manageSubscriptions();
+                        });
+                });
+                break;
+            case '5':
                 console.log("Returning to the main menu...");
                 loggedInMenu();
                 break;
@@ -539,6 +561,27 @@ function manageSubscriptions() {
         }
     });
 }
+
+// Function to get and display the details of a specific contact
+async function displayContactDetails(userJID) {
+    try {
+        // Separate the JID into username and domain.
+        let [username, domain] = userJID.split('@');
+        if (domain !== "alumchat.xyz") {
+            console.error("Invalid domain in JID");
+            return;
+        }
+        console.log("\nContact Details:");
+        console.log(`Username: ${username}`);
+        console.log(`Domain: ${domain}`);
+        // Online status, display as:
+        // console.log(`Status: ${status}`);
+
+    } catch (error) {
+        console.error('Error while displaying contact details:', error);
+    }
+}
+
 
 //**********************************************/
 //**************** EXIT SECTION ****************/
