@@ -275,6 +275,36 @@ function fetchRoster() {
     xmpp.send(rosterRequest);
 }
 
+// Function to fetch the contacts
+async function fetchContacts() {
+    const contacts = [];
+    const rosterIQ = xml(
+        'iq',
+        { type: 'get', id: 'roster_1' },
+        xml('query', { xmlns: 'jabber:iq:roster' })
+    );
+
+    try {
+        const response = await xmpp.send(rosterIQ);
+
+        console.log("XMPP Roster Response:", response); // Logging for debug purposes
+
+        if (response && response.children) {
+            response.children.forEach(child => {
+                if (child.is('item')) {
+                    contacts.push(child.attrs.jid);
+                }
+            });
+        }
+        return contacts;
+    } catch (error) {
+        console.error("Error fetching contacts:", error);
+        throw error; // Re-throwing the error so that you can catch it outside
+    }
+}
+
+
+
 // Function to handle the roster response and display contact statuses
 function handleRoster(stanza) {
     if (stanza.is('iq') && stanza.attrs.type === 'result') {
@@ -536,22 +566,14 @@ function manageSubscriptions() {
                 });
                 break;
             case '4':
-                prompt("Enter the JID or name of the contact you wish to view: ", (userJID) => {
-                    if (!userJID.includes("@")) {
-                        userJID = `${userJID}@alumchat.xyz`;  // Append the domain if only the name is provided
-                    }
-
-                    displayContactDetails(userJID)
-                        .then(() => {
-                            manageSubscriptions();
-                        })
-                        .catch(() => {
-                            manageSubscriptions();
-                        });
+                console.log("Provide details for the contact.");
+                prompt("Provide the JID or name of the contact: ", (queriedJID) => {
+                    initiateRosterRequest(queriedJID);
                 });
                 break;
+
             case '5':
-                console.log("Returning to the main menu...");
+                console.log("Navigating back to the main menu.");
                 loggedInMenu();
                 break;
             default:
@@ -564,22 +586,74 @@ function manageSubscriptions() {
 
 // Function to get and display the details of a specific contact
 async function displayContactDetails(userJID) {
+    let contacts;
     try {
-        // Separate the JID into username and domain.
-        let [username, domain] = userJID.split('@');
-        if (domain !== "alumchat.xyz") {
-            console.error("Invalid domain in JID");
-            return;
-        }
-        console.log("\nContact Details:");
-        console.log(`Username: ${username}`);
-        console.log(`Domain: ${domain}`);
-        // Online status, display as:
-        // console.log(`Status: ${status}`);
-
+        contacts = await fetchContacts();
     } catch (error) {
-        console.error('Error while displaying contact details:', error);
+        console.log("This contact does not exist in your roster.");
+        return;
     }
+
+    // Check if the user is in contacts
+    if (!contacts.includes(`${userJID}@alumchat.xyz`)) {
+        console.log("This contact does not exist in your roster.");
+        return;
+    }
+
+    // Separate the JID into username and domain.
+    let [username, domain] = userJID.split('@');
+    if (!domain) domain = "alumchat.xyz"; // Assign default domain if none
+
+    console.log("\nContact Details:");
+    console.log(`Username: ${username}`);
+    console.log(`Domain: ${domain}`);
+
+}
+
+// Function to process the roster stanza response from the XMPP server
+function processRosterStanza(stanza, queriedJID) {
+    if (stanza.is('iq') && stanza.attrs.type === 'result') {
+        const queryData = stanza.getChild('query', 'jabber:iq:roster');
+        const contactList = queryData.getChildren('item');
+        const completeJID = `${queriedJID}@alumchat.xyz`;
+
+        const matchingContact = contactList.find((contact) => contact.attrs.jid === completeJID);
+
+        if (matchingContact) {
+            let [contactName, domain] = matchingContact.attrs.jid.split('@');
+            console.log(`\nDetails for ${queriedJID}:`);
+            console.log(`Username: ${contactName}`);
+            console.log(`Domain: ${domain}`);
+            // Further contact details can be displayed as required
+        } else {
+            console.log(`\nThe contact ${queriedJID} is not in your roster.`);
+        }
+
+        manageSubscriptions();  // Navigate back to the Contact Management menu
+    }
+}
+
+// Function to send roster request to XMPP server
+function initiateRosterRequest(queriedJID) {
+    console.log("Roster query dispatched to server.");
+
+    // The event listener is set to 'once' so that it is triggered just one time
+    xmpp.once('stanza', (stanza) => processRosterStanza(stanza, queriedJID));
+
+    const rosterQuery = xml(
+        'iq',
+        { type: 'get', id: 'roster' },
+        xml('query', { xmlns: 'jabber:iq:roster' })
+    );
+
+    // Sending roster query to server
+    xmpp.send(rosterQuery)
+        .then(() => {
+            console.log('Roster request dispatched to server.');
+        })
+        .catch((err) => {
+            console.error('Error dispatching roster request:', err);
+        });
 }
 
 
