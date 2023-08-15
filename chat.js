@@ -193,26 +193,21 @@ function loginExistingUser() {
         console.log(`Logged in as ${jid.toString()}`);
         loggedInMenu();
 
-        // Listen for incoming subscription requests
+        // Listen for incoming stanzas
         xmpp.on('stanza', async (stanza) => {
-            const fromJid = stanza.attrs.from;
+            const sender = stanza.attrs.from;
             if (stanza.is('presence') && stanza.attrs.type === 'subscribe') {
-                subscriptions.push(fromJid); // Store the JID of the user who sent the request.
-
-                console.log(`Received a new subscription request from ${fromJid}.`); // Notify the user in real-time.
+                subscriptions.push(sender); // Store the JID of the user who sent the request.
+                console.log(`Received a new subscription request from ${sender}.`); // Notify the user in real-time.
+            } else if (stanza.is('message') && stanza.attrs.type === 'chat') {
+                const body = stanza.getChildText('body');
+                if (body) {
+                    console.log(`${sender}: ${body}`);
+                }
             }
         });
     });
 
-
-    /** 
-    xmpp.on('stanza', async (stanza) => {
-        const fromJid = stanza.attrs.from;
-
-        if (stanza.is('message')) {
-            // Handle the message...
-        }
-    });*/
 
     xmpp.start().catch(console.error);
 }
@@ -261,6 +256,119 @@ function logoutSession() {
     console.log("Logged out successfully.");
     mainPage();  // Display the very first menu
 }
+
+// Log in menu
+function loggedInMenu() {
+    console.log("\nLogged In Menu:");
+    console.log("1. Check users");
+    console.log("2. Manage contacts");
+    console.log("3. Change online status");
+    console.log("4. Chats");
+    console.log('5. Delete Account');
+    console.log("6. Logout");
+
+    prompt('Choose an option (1-6): ', (answer) => {
+        switch (answer) {
+            case '1':
+                checkUsers();
+                break;
+            case '2':
+                manageSubscriptions()
+                break;
+            case '3':
+                changeOnlineStatus();
+                break;
+            case '4':
+                chatMenu();
+                break;
+            case '5':
+                deleteAccount();
+                break;
+            case '6':
+                logoutSession();
+                break;
+            default:
+                console.log("Invalid option.");
+                loggedInMenu();
+                break;
+        }
+    });
+}
+
+// ***************************************
+
+// The chat menu that displays the options for the user
+function chatMenu() {
+    console.log("\nChat Menu:");
+    console.log("1. Chat with a contact");
+    console.log("2. Chat with anyone");
+    console.log("3. Go back to the main menu");
+    prompt('Choose an option (1-3): ', chatMenuOptions);
+}
+
+function chatMenuOptions(option) {
+    switch (option) {
+        case '1':
+            chatWithContact();
+            break;
+        case '2':
+            chatWithAnyone();
+            break;
+        case '3':
+            loggedInMenu();
+            break;
+        default:
+            console.log("Invalid option.");
+            chatMenu();
+            break;
+    }
+}
+
+// Chat with contact
+function chatWithContact() {
+    prompt("Enter the JID or name of the contact you want to chat with: ", (contactJID) => {
+        startChat(`${contactJID}@alumchat.xyz`);
+    });
+}
+
+// Chat with anyone
+function chatWithAnyone() {
+    prompt("Enter the JID of the user you want to chat with: ", (anyJID) => {
+        startChat(anyJID);
+    });
+}
+
+// Function to handle outgoing messages
+function startChat(anyJID) {
+    console.log(`Starting chat with: ${anyJID}`);
+
+    // Function to handle outgoing messages
+    async function handleOutgoingMessages(message) {
+        const text = xml(
+            'message',
+            { type: 'chat', to: anyJID },
+            xml('body', {}, message),
+        );
+        await xmpp.send(text);
+    }
+
+    // Message handling function
+    function sendMessage() {
+        prompt('Send a message: ', async (message) => {
+            if (message.trim() === './exit') {
+                console.log('Chat ended.');
+                chatMenu(); // Go back to the chat menu after ending the conversation
+            } else {
+                await handleOutgoingMessages(message);
+                sendMessage(); // Prompt for the next message
+            }
+        });
+    }
+
+    sendMessage();
+}
+
+// ***************************************
 
 // Function to fetch the roster
 function fetchRoster() {
@@ -460,9 +568,9 @@ function changeOnlineStatus() {
 }
 
 // Function to send a friend request to another user
-function sendFriendRequest(userJID) {
-    userJID = `${userJID}@alumchat.xyz`;
-    const presence = xml('presence', { to: userJID, type: 'subscribe' });
+function sendFriendRequest(anyJID) {
+    anyJID = `${anyJID}@alumchat.xyz`;
+    const presence = xml('presence', { to: anyJID, type: 'subscribe' });
 
     return xmpp.send(presence);
 }
@@ -484,9 +592,9 @@ function acceptFriendRequest(userRequest) {
 }
 
 // Function to delete a contact from the user's list
-function deleteContact(userJID) {
-    userJID = `${userJID}@alumchat.xyz`;
-    const presence = xml('presence', { to: userJID, type: 'unsubscribe' });
+function deleteContact(anyJID) {
+    anyJID = `${anyJID}@alumchat.xyz`;
+    const presence = xml('presence', { to: anyJID, type: 'unsubscribe' });
 
     return xmpp.send(presence).then(() => {
         // Construct the XML stanza to remove the user from the roster
@@ -494,7 +602,7 @@ function deleteContact(userJID) {
             'iq',
             { type: 'set', id: 'remove1' },
             xml('query', { xmlns: 'jabber:iq:roster' },
-                xml('item', { jid: userJID, subscription: 'remove' })
+                xml('item', { jid: anyJID, subscription: 'remove' })
             )
         );
 
@@ -514,10 +622,10 @@ function manageSubscriptions() {
     prompt("Choose an option (1-5): ", (answer) => {
         switch (answer) {
             case '1':
-                prompt("JID of the user you wish to add: ", (userJID) => {
-                    sendFriendRequest(userJID)
+                prompt("JID of the user you wish to add: ", (anyJID) => {
+                    sendFriendRequest(anyJID)
                         .then(() => {
-                            console.log(`Friend request sent to ${userJID}@alumchat.xyz`);
+                            console.log(`Friend request sent to ${anyJID}@alumchat.xyz`);
                             manageSubscriptions();
                         })
                         .catch(err => {
@@ -551,10 +659,10 @@ function manageSubscriptions() {
                 }
                 break;
             case '3':
-                prompt("JID of the user you wish to delete: ", (userJID) => {
-                    deleteContact(userJID)
+                prompt("JID of the user you wish to delete: ", (anyJID) => {
+                    deleteContact(anyJID)
                         .then(() => {
-                            console.log(`You have removed ${userJID}@alumchat.xyz from your contacts.`);
+                            console.log(`You have removed ${anyJID}@alumchat.xyz from your contacts.`);
                             manageSubscriptions();
                         })
                         .catch(err => {
@@ -583,7 +691,7 @@ function manageSubscriptions() {
 }
 
 // Function to get and display the details of a specific contact
-async function displayContactDetails(userJID) {
+async function displayContactDetails(anyJID) {
     let contacts;
     try {
         contacts = await fetchContacts();
@@ -593,13 +701,13 @@ async function displayContactDetails(userJID) {
     }
 
     // Check if the user is in contacts
-    if (!contacts.includes(`${userJID}@alumchat.xyz`)) {
+    if (!contacts.includes(`${anyJID}@alumchat.xyz`)) {
         console.log("This contact does not exist in your roster.");
         return;
     }
 
     // Separate the JID into username and domain.
-    let [username, domain] = userJID.split('@');
+    let [username, domain] = anyJID.split('@');
     if (!domain) domain = "alumchat.xyz"; // Assign default domain if none
 
     console.log("\nContact Details:");
@@ -635,7 +743,6 @@ function processRosterStanza(stanza, queriedJID) {
         manageSubscriptions();  // Navigate back to the Contact Management menu
     }
 }
-
 
 // Function to send roster request to XMPP server
 function initiateRosterRequest(queriedJID) {
