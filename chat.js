@@ -11,8 +11,8 @@ let manualLogout = false;
 let userStatuses = {};
 let subscriptions = []; // This will store the JIDs of users who have sent you a friend request.
 let pendingFriendRequests = [];
-
-//const xml = require('@xmpp/xml');
+let notificationInterval;  // Declare a variable to store the interval ID
+let notifications = [];  // Declare an array to store notifications
 
 const readlineInterface = rl.createInterface({
     input: process.stdin,
@@ -178,6 +178,7 @@ function loginExistingUser() {
             console.log('You are offline now.');
         }
         manualLogout = false;  // Reset the flag
+        clearInterval(notificationInterval);  // Stop the notification interval when the user goes offline
     });
 
     // Start a timeout to check for prolonged inactivity
@@ -193,21 +194,43 @@ function loginExistingUser() {
         console.log(`Logged in as ${jid.toString()}`);
         loggedInMenu();
 
+        // Start a notification interval when the user logs in
+        notificationInterval = setInterval(() => {
+            if (notifications.length > 0) {
+                console.log("You have new notifications. Go to the Notifications section to read them.");
+            }
+        }, 20000);  // Check for new notifications every 20 seconds
+
         // Listen for incoming stanzas
         xmpp.on('stanza', async (stanza) => {
             const sender = stanza.attrs.from;
             if (stanza.is('presence') && stanza.attrs.type === 'subscribe') {
                 subscriptions.push(sender); // Store the JID of the user who sent the request.
                 console.log(`Received a new subscription request from ${sender}.`); // Notify the user in real-time.
+
+                // Add a new notification for the subscription request
+                notifications.push({
+                    type: 'subscription request',
+                    sender: sender,
+                    text: 'Subscription request',
+                    timestamp: new Date()
+                });
             } else if (stanza.is('message') && stanza.attrs.type === 'chat') {
                 const body = stanza.getChildText('body');
                 if (body) {
                     console.log(`${sender}: ${body}`);
+
+                    // Add a new notification for the chat message
+                    notifications.push({
+                        type: 'message',
+                        sender: sender,
+                        text: body,
+                        timestamp: new Date()
+                    });
                 }
             }
         });
     });
-
 
     xmpp.start().catch(console.error);
 }
@@ -264,10 +287,11 @@ function loggedInMenu() {
     console.log("2. Manage contacts");
     console.log("3. Change online status");
     console.log("4. Chats");
-    console.log('5. Delete Account');
-    console.log("6. Logout");
+    console.log("5. Notifications");  // New option
+    console.log('6. Delete Account');
+    console.log("7. Logout");  // Updated option number
 
-    prompt('Choose an option (1-6): ', (answer) => {
+    prompt('Choose an option (1-7): ', (answer) => {
         switch (answer) {
             case '1':
                 checkUsers();
@@ -281,10 +305,13 @@ function loggedInMenu() {
             case '4':
                 chatMenu();
                 break;
-            case '5':
-                deleteAccount();
+            case '5':  // Notifications option
+                viewNotifications();
                 break;
             case '6':
+                deleteAccount();
+                break;
+            case '7':  // Updated case number for the Logout option
                 logoutSession();
                 break;
             default:
@@ -765,6 +792,19 @@ function initiateRosterRequest(queriedJID) {
         .catch((err) => {
             console.error('Error dispatching roster request:', err);
         });
+}
+
+// Function to view notifications
+function viewNotifications() {
+    console.log("\nNotifications:");
+    if (notifications.length === 0) {
+        console.log("You have no notifications.");
+    } else {
+        notifications.forEach((notification, index) => {
+            console.log(`${index + 1}. ${notification.timestamp.toLocaleTimeString()} - ${notification.sender}: ${notification.text}`);
+        });
+    }
+    loggedInMenu();  // Return to the logged-in menu after viewing notifications
 }
 
 //**********************************************/
