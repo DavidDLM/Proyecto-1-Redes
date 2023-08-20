@@ -6,6 +6,10 @@ const readlineSync = require('readline-sync'); // Importing readline-sync packag
 const { xml } = require('@xmpp/client');
 let xmpp; // Global variable for the XMPP client.
 const rl = require('readline'); // Add this import for the asynchronous readline.
+//const xml = require('@xmpp/xml');
+let fetch;
+const fs = require('fs');
+const path = require('path');
 let contacts = [];  // This stores the contacts after fetch the roster
 let manualLogout = false;
 let userStatuses = {};
@@ -13,6 +17,8 @@ let subscriptions = []; // This will store the JIDs of users who have sent you a
 let pendingFriendRequests = [];
 let notificationInterval;  // Declare a variable to store the interval ID
 let notifications = [];  // Declare an array to store notifications
+const joinedChatRooms = []; // Define a global array to keep track of the chat rooms you have joined
+let messageListenerAdded = false;
 
 const readlineInterface = rl.createInterface({
     input: process.stdin,
@@ -215,10 +221,25 @@ function loginExistingUser() {
                     text: 'Subscription request',
                     timestamp: new Date()
                 });
-            } else if (stanza.is('message') && stanza.attrs.type === 'chat') {
+            } else if (stanza.is('message')) {
                 const body = stanza.getChildText('body');
                 if (body) {
-                    console.log(`${sender}: ${body}`);
+                    const roomName = sender.split('@')[0];
+                    const nickname = sender.split('/')[1];
+
+                    // Read the joinedChatRooms.json file and parse it into the joinedChatRooms array
+                    let joinedChatRooms = [];
+                    try {
+                        const data = fs.readFileSync('joinedChatRooms.json', 'utf8');
+                        joinedChatRooms = JSON.parse(data);
+                    } catch (error) {
+                        console.error('Error reading the joined chat rooms file:', error);
+                    }
+
+                    const roomNames = joinedChatRooms.map(room => room.name);
+                    if (roomNames.includes(roomName)) {
+                        console.log(`${nickname}: ${body}`);
+                    }
 
                     // Add a new notification for the chat message
                     notifications.push({
@@ -228,45 +249,38 @@ function loginExistingUser() {
                         timestamp: new Date()
                     });
                 }
+
+                // Handle incoming file transfer messages
+                const x = stanza.getChild('x', 'jabber:x:oob');
+                if (x && x.getChild('url')) {
+                    const url = x.getChild('url').text();
+                    const fileName = url.split('/').pop();
+
+                    console.log(`Received file URL: ${url}`);
+                    try {
+                        await downloadFile(url, `./downloads/${fileName}`);
+                        console.log(`File downloaded to ./downloads/${fileName}`);
+
+                        // Add a new notification for the file transfer
+                        notifications.push({
+                            type: 'file transfer',
+                            sender: sender,
+                            text: `Received a file: ${fileName}`,
+                            timestamp: new Date(),
+                            fileUrl: url,
+                        });
+                    } catch (err) {
+                        console.error(`Failed to download file: ${err.message}`);
+                    }
+                }
             }
+
         });
+
+
     });
 
     xmpp.start().catch(console.error);
-}
-
-// Log in menu
-function loggedInMenu() {
-    console.log("\nLogged In Menu:");
-    console.log("1. Check users");
-    console.log("2. Manage contacts");
-    console.log("3. Change online status");
-    console.log('4. Delete Account');
-    console.log("5. Logout");
-
-    prompt('Choose an option (1-5): ', (answer) => {
-        switch (answer) {
-            case '1':
-                checkUsers();
-                break;
-            case '2':
-                manageSubscriptions()
-                break;
-            case '3':
-                changeOnlineStatus();
-                break;
-            case '4':
-                deleteAccount();
-                break;
-            case '5':
-                logoutSession();
-                break;
-            default:
-                console.log("Invalid option.");
-                loggedInMenu();
-                break;
-        }
-    });
 }
 
 // Logout
@@ -287,17 +301,19 @@ function loggedInMenu() {
     console.log("2. Manage contacts");
     console.log("3. Change online status");
     console.log("4. Chats");
-    console.log("5. Notifications");  // New option
-    console.log('6. Delete Account');
-    console.log("7. Logout");  // Updated option number
+    console.log("5. Chat Rooms");  // Updated option
+    console.log('6. Notifications');
+    console.log('7. Send file');
+    console.log('8. Delete Account');
+    console.log("9. Logout");
 
-    prompt('Choose an option (1-7): ', (answer) => {
+    prompt('Choose an option (1-9): ', (answer) => {
         switch (answer) {
             case '1':
                 checkUsers();
                 break;
             case '2':
-                manageSubscriptions()
+                manageSubscriptions();
                 break;
             case '3':
                 changeOnlineStatus();
@@ -305,13 +321,23 @@ function loggedInMenu() {
             case '4':
                 chatMenu();
                 break;
-            case '5':  // Notifications option
-                viewNotifications();
+            case '5':  // Updated case for the "Chat Rooms" submenu
+                chatRoomsMenu();
                 break;
             case '6':
+                viewNotifications();
+                break;
+            case '7':
+                prompt('Enter the contact JID to send the file to: ', (contactJID) => {
+                    prompt('Enter the file path: ', (filePath) => {
+                        sendFile(contactJID, filePath);
+                    });
+                });
+                break;
+            case '8':
                 deleteAccount();
                 break;
-            case '7':  // Updated case number for the Logout option
+            case '9':
                 logoutSession();
                 break;
             default:
@@ -321,6 +347,7 @@ function loggedInMenu() {
         }
     });
 }
+
 
 // ***************************************
 
@@ -399,7 +426,7 @@ function startChat(anyJID) {
 
 // Function to fetch the roster
 function fetchRoster() {
-    console.log("Fetching users.");
+    console.log("\nFetching users.");
 
     const rosterRequest = xml(
         'iq',
@@ -806,6 +833,319 @@ function viewNotifications() {
     }
     loggedInMenu();  // Return to the logged-in menu after viewing notifications
 }
+
+async function requestUploadSlot(client, filename, size) {
+    try {
+        const iq = xml(
+            'iq',
+            { type: 'set' },
+            xml('request', { xmlns: 'urn:xmpp:http:upload:0', filename, size })
+        );
+
+        const result = await client.iqCaller.request(iq);
+        const slot = result.getChild('slot', 'urn:xmpp:http:upload:0');
+        const putUrl = slot.getChildText('put');
+        const getUrl = slot.getChildText('get');
+
+        return { putUrl, getUrl };
+    } catch (error) {
+        console.error('Error requesting upload slot:', error);
+        throw error;
+    }
+}
+// C:\Users\Gamer\Documents\archivo.txt
+(async function () {
+    const module = await import('node-fetch');
+    fetch = module.default;
+})();
+
+async function sendFile(contactJID, filePath) {
+    try {
+        if (!fetch) {
+            throw new Error('Fetch not initialized yet. Please try again later.');
+        }
+
+        const data = await fs.promises.readFile(filePath);
+        const fileName = path.basename(filePath);
+
+        // Request an upload slot from the XMPP server
+        const slot = await requestUploadSlot(client, fileName, data.length);
+        const putUrl = slot.putUrl;
+        const getUrl = slot.getUrl;
+
+        // Upload the file to the provided URL
+        await fetch(putUrl, {
+            method: 'PUT',
+            body: data,
+            headers: { 'Content-Type': 'application/octet-stream' },
+        });
+
+        // Share the URL of the uploaded file with the recipient
+        const message = xml(
+            'message',
+            { to: contactJID, type: 'chat' },
+            xml('body', {}, `Download the file here: ${getUrl}`),
+            xml('x', { xmlns: 'jabber:x:oob' }, xml('url', {}, getUrl), xml('desc', {}, `File: ${fileName}`))
+        );
+
+        await client.send(message);
+        console.log('File sent successfully.');
+    } catch (error) {
+        console.error('Error sending the file:', error);
+    }
+
+    loggedInMenu();
+}
+
+// Chat rooms menu
+function chatRoomsMenu() {
+    console.log("\nChat Rooms Menu:");
+    console.log("1. Create chat room");
+    console.log("2. Join chat room");
+    console.log("3. Leave chat room");
+    console.log("4. List joined chat rooms");  // New option
+    console.log("5. Back to main menu");
+
+    prompt('Choose an option (1-5): ', (answer) => {
+        switch (answer) {
+            case '1':
+                createChatRoom();
+                break;
+            case '2':
+                joinChatRoom();
+                break;
+            case '3':
+                leaveChatRoom();
+                break;
+            case '4':  // New case for the "List joined chat rooms" option
+                listJoinedChatRooms();
+                break;
+            case '5':
+                loggedInMenu();
+                break;
+            default:
+                console.log("Invalid option.");
+                chatRoomsMenu();
+                break;
+        }
+    });
+}
+
+async function createChatRoom() {
+    prompt('Enter the name of the chat room you want to create (e.g., "myroom"): ', async (roomName) => {
+        if (roomName) {
+            const roomJID = roomName + '@conference.alumchat.xyz';
+            await xmpp.send(xml(
+                'presence',
+                { to: `${roomJID}/${username}` },
+                xml('x', { xmlns: 'http://jabber.org/protocol/muc' })
+            ));
+            console.log(`Chat room "${roomName}" created and joined successfully!`);
+            // Store the joined chat room in the JSON file
+            let joinedChatRooms = [];
+            try {
+                const data = fs.readFileSync('joinedChatRooms.json', 'utf8');
+                joinedChatRooms = JSON.parse(data);
+            } catch (error) {
+                // Handle error if the file doesn't exist or is not valid JSON
+            }
+            // Add the newly joined chat room to the list
+            joinedChatRooms.push({ name: roomName, jid: roomJID });
+            fs.writeFileSync('joinedChatRooms.json', JSON.stringify(joinedChatRooms, null, 2));
+        } else {
+            console.log('Room name cannot be empty.');
+        }
+        chatRoomsMenu();
+    });
+}
+
+function listJoinedChatRooms() {
+    try {
+        const data = fs.readFileSync('joinedChatRooms.json', 'utf8');
+        const joinedChatRooms = JSON.parse(data);
+
+        console.log("\nJoined Chat Rooms:");
+        if (joinedChatRooms.length === 0) {
+            console.log("You have not joined any chat rooms.");
+        } else {
+            joinedChatRooms.forEach((room, index) => {
+                console.log(`${index + 1}. ${room.name} (${room.jid})`);
+            });
+        }
+
+    } catch (error) {
+        console.error('Error reading the joined chat rooms file:', error);
+    }
+
+    chatRoomsMenu();
+}
+
+function leaveChatRoom() {
+    try {
+        const data = fs.readFileSync('joinedChatRooms.json', 'utf8');
+        const joinedChatRooms = JSON.parse(data);
+
+        if (joinedChatRooms.length === 0) {
+            console.log("You have not joined any chat rooms.");
+            chatRoomsMenu();
+            return;
+        }
+
+        console.log("\nJoined Chat Rooms:");
+        joinedChatRooms.forEach((room, index) => {
+            console.log(`${index + 1}. ${room.name} (${room.jid})`);
+        });
+
+        prompt('Enter the number of the chat room you want to leave: ', async (choice) => {
+            const index = parseInt(choice) - 1;
+            if (index >= 0 && index < joinedChatRooms.length) {
+                const room = joinedChatRooms[index];
+                await xmpp.send(xml(
+                    'presence',
+                    { to: `${room.jid}/${username}`, type: 'unavailable' }
+                ));
+                joinedChatRooms.splice(index, 1);
+                fs.writeFileSync('joinedChatRooms.json', JSON.stringify(joinedChatRooms));
+                console.log(`You have left the chat room ${room.name} (${room.jid}).`);
+            } else {
+                console.log("Invalid choice.");
+            }
+            chatRoomsMenu();
+        });
+
+    } catch (error) {
+        console.error('Error reading the joined chat rooms file:', error);
+        chatRoomsMenu();
+    }
+}
+
+function joinChatRoom() {
+    console.log("\nJoin Chat Room Menu:");
+    console.log("1. Join existing chat room");
+    console.log("2. Join new chat room");
+    console.log("3. Back to chat rooms menu");
+
+    prompt('Choose an option (1-3): ', (answer) => {
+        switch (answer) {
+            case '1':
+                // Read chatRooms.json and show existing rooms
+                fs.readFile('joinedChatRooms.json', 'utf8', (err, data) => {
+                    if (err) {
+                        console.log('Error reading joinedChatRooms.json:', err);
+                        joinChatRoom();
+                        return;
+                    }
+
+                    const chatRooms = JSON.parse(data);
+                    console.log("\nJoined chat rooms:");
+                    chatRooms.forEach((room, index) => {
+                        console.log(`${index + 1}. ${room.name} (${room.jid})`);
+                    });
+
+                    prompt('Choose a room: ', (roomName) => {
+                        joinSpecifiedRoom(roomName);
+                    });
+                });
+                break;
+            case '2':
+                prompt('Enter the new room name: ', (roomName) => {
+                    joinSpecifiedRoom(roomName);
+                });
+                break;
+            case '3':
+                chatRoomsMenu();
+                break;
+            default:
+                console.log("Invalid option.");
+                joinChatRoom();
+                break;
+        }
+    });
+}
+
+function joinSpecifiedRoom(roomName) {
+    const roomJID = roomName + '@conference.alumchat.xyz';
+
+    xmpp.send(xml(
+        'presence',
+        { to: `${roomJID}/${username}` },
+        xml('x', { xmlns: 'http://jabber.org/protocol/muc' })
+    ));
+
+    console.log(`Joined chat room "${roomName}" successfully!`);
+    chatInRoom(roomName);
+
+    // Store the room information in joinedChatRooms.json for future use
+    fs.readFile('joinedChatRooms.json', 'utf8', (err, data) => {
+        if (err) {
+            console.log('Error reading joinedChatRooms.json:', err);
+            return;
+        }
+
+        const chatRooms = JSON.parse(data);
+        const roomIndex = chatRooms.findIndex(room => room.name === roomName);
+
+        // If the room is not already stored in the JSON file, add it
+        if (roomIndex === -1) {
+            const roomData = {
+                name: roomName,
+                jid: roomJID
+            };
+
+            chatRooms.push(roomData);
+
+            fs.writeFile('joinedChatRooms.json', JSON.stringify(chatRooms), (err) => {
+                if (err) {
+                    console.log('Error writing to joinedChatRooms.json:', err);
+                }
+            });
+        }
+    });
+}
+
+function chatInRoom(roomName) {
+    const roomJID = roomName + '@conference.alumchat.xyz';
+
+    // Read the joinedChatRooms.json file and parse it into the joinedChatRooms array
+    let joinedChatRooms = [];
+    try {
+        const data = fs.readFileSync('joinedChatRooms.json', 'utf8');
+        joinedChatRooms = JSON.parse(data);
+    } catch (error) {
+        console.error('Error reading the joined chat rooms file:', error);
+    }
+
+    // Check if the room exists in the joinedChatRooms array
+    if (!joinedChatRooms.some(room => room.name === roomName)) {
+        console.log(`You have not joined the chat room "${roomName}" yet.`);
+        return chatRoomsMenu();
+    }
+
+    // Function to send messages to the chat room
+    function sendMessage(message) {
+        if (message.trim() !== '') {
+            xmpp.send(xml(
+                'message',
+                { to: roomJID, type: 'groupchat' },
+                xml('body', {}, message)
+            ));
+        }
+
+        chatInRoom(roomName); // Continue prompting for messages
+    }
+
+    // Prompt for user messages
+    prompt('Type your message (type "./exit" to leave the room): ', (message) => {
+        if (message === './exit') {
+            // Return to the chat rooms menu
+            chatRoomsMenu();
+        } else {
+            sendMessage(message);
+        }
+    });
+}
+
+
 
 //**********************************************/
 //**************** EXIT SECTION ****************/
