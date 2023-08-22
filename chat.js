@@ -19,6 +19,7 @@ let notificationInterval;  // Declare a variable to store the interval ID
 let notifications = [];  // Declare an array to store notifications
 const joinedChatRooms = []; // Define a global array to keep track of the chat rooms you have joined
 let messageListenerAdded = false;
+let isMuted = false;
 
 const readlineInterface = rl.createInterface({
     input: process.stdin,
@@ -37,6 +38,7 @@ function prompt(question, callback) {
     });
 }
 
+// Function to create a main menu for login, register
 function mainPage() {
     console.log("\nMain Menu");
     console.log("1. Register New User");
@@ -69,6 +71,7 @@ function mainPage() {
 //**********************************************/
 //************ REGISTER SECTION ****************/
 
+// Function to create a new user
 function registerNewUser() {
     console.log("Registering new user.");
 
@@ -84,6 +87,7 @@ function registerNewUser() {
     cliente.on('error', handleError);
 }
 
+// Function to connect to the domain
 function initiateConnection() {
     // Connection
     cliente.connect(5222, 'alumchat.xyz', function () {
@@ -91,6 +95,7 @@ function initiateConnection() {
     });
 }
 
+// Function to gather credentials
 function gatherCredentials() {
     prompt("Username: ", (username) => {
         prompt("Password: ", (password) => {
@@ -99,6 +104,7 @@ function gatherCredentials() {
     });
 }
 
+// Function to send a registration request
 function sendRegistrationRequest(username, password) {
     // Constructs XML registration request and sends to server.
     const xmlRegister = `
@@ -112,6 +118,7 @@ function sendRegistrationRequest(username, password) {
     cliente.write(xmlRegister);
 }
 
+// Function to handle the server response after sending request
 function handleServerResponse(data) {
     // Handles server's response after registration request.
     if (data.toString().includes('<stream:features>')) return;
@@ -124,18 +131,21 @@ function handleServerResponse(data) {
     }
 }
 
+// Handles close event
 function handleClose() {
     // Handles the close event of the connection.
     console.log('Connection closed');
     cleanupListeners();
 }
 
+// Handles error in communication
 function handleError(err) {
     // Handles the error event of the connection.
     console.log('Error occurred:', err.message);
     cleanupListeners();
 }
 
+// Handles listeners
 function cleanupListeners() {
     // Removes listeners to avoid potential memory leaks.
     cliente.removeListener('data', handleServerResponse);
@@ -202,7 +212,7 @@ function loginExistingUser() {
 
         // Start a notification interval when the user logs in
         notificationInterval = setInterval(() => {
-            if (notifications.length > 0) {
+            if (notifications.length > 0 && !isMuted) {
                 console.log("You have new notifications. Go to the Notifications section to read them.");
             }
         }, 20000);  // Check for new notifications every 20 seconds
@@ -274,12 +284,8 @@ function loginExistingUser() {
                     }
                 }
             }
-
         });
-
-
     });
-
     xmpp.start().catch(console.error);
 }
 
@@ -325,7 +331,7 @@ function loggedInMenu() {
                 chatRoomsMenu();
                 break;
             case '6':
-                viewNotifications();
+                notificationsMenu(); // Updated action
                 break;
             case '7':
                 prompt('Enter the contact JID to send the file to: ', (contactJID) => {
@@ -348,7 +354,6 @@ function loggedInMenu() {
     });
 }
 
-
 // ***************************************
 
 // The chat menu that displays the options for the user
@@ -360,6 +365,7 @@ function chatMenu() {
     prompt('Choose an option (1-3): ', chatMenuOptions);
 }
 
+// Submenu for chat options
 function chatMenuOptions(option) {
     switch (option) {
         case '1':
@@ -437,34 +443,6 @@ function fetchRoster() {
     xmpp.send(rosterRequest);
 }
 
-// Function to fetch the contacts
-async function fetchContacts() {
-    const contacts = [];
-    const rosterIQ = xml(
-        'iq',
-        { type: 'get', id: 'roster_1' },
-        xml('query', { xmlns: 'jabber:iq:roster' })
-    );
-
-    try {
-        const response = await xmpp.send(rosterIQ);
-
-        console.log("XMPP Roster Response:", response); // Logging for debug purposes
-
-        if (response && response.children) {
-            response.children.forEach(child => {
-                if (child.is('item')) {
-                    contacts.push(child.attrs.jid);
-                }
-            });
-        }
-        return contacts;
-    } catch (error) {
-        console.error("Error fetching contacts:", error);
-        throw error; // Re-throwing the error so that you can catch it outside
-    }
-}
-
 // Function to handle the roster response and display contact statuses
 function handleRoster(stanza) {
     if (stanza.is('iq') && stanza.attrs.type === 'result') {
@@ -482,6 +460,7 @@ function handleRoster(stanza) {
     }
 }
 
+// Function to display contacts
 function displayRosterListeners(contacts) {
     // Initialize the user statuses with 'offline'.
     contacts.forEach(contact => {
@@ -744,32 +723,6 @@ function manageSubscriptions() {
     });
 }
 
-// Function to get and display the details of a specific contact
-async function displayContactDetails(anyJID) {
-    let contacts;
-    try {
-        contacts = await fetchContacts();
-    } catch (error) {
-        console.log("This contact does not exist in your roster.");
-        return;
-    }
-
-    // Check if the user is in contacts
-    if (!contacts.includes(`${anyJID}@alumchat.xyz`)) {
-        console.log("This contact does not exist in your roster.");
-        return;
-    }
-
-    // Separate the JID into username and domain.
-    let [username, domain] = anyJID.split('@');
-    if (!domain) domain = "alumchat.xyz"; // Assign default domain if none
-
-    console.log("\nContact Details:");
-    console.log(`Username: ${username}`);
-    console.log(`Domain: ${domain}`);
-
-}
-
 // Function to process the roster stanza response from the XMPP server
 function processRosterStanza(stanza, queriedJID) {
     if (stanza.is('iq') && stanza.attrs.type === 'result') {
@@ -831,9 +784,24 @@ function viewNotifications() {
             console.log(`${index + 1}. ${notification.timestamp.toLocaleTimeString()} - ${notification.sender}: ${notification.text}`);
         });
     }
-    loggedInMenu();  // Return to the logged-in menu after viewing notifications
+    notificationsMenu(); // Return to the notifications menu after viewing notifications
 }
 
+// Mute/turn on notifications
+function toggleMuteNotifications() {
+    isMuted = !isMuted;
+    console.log(`Notifications are now ${isMuted ? 'muted' : 'unmuted'}.`);
+    notificationsMenu();
+}
+
+// Delete notifications
+function deleteNotifications() {
+    notifications = [];
+    console.log('All notifications have been deleted.');
+    notificationsMenu();
+}
+
+// Function to request a slot for uploading a file
 async function requestUploadSlot(client, filename, size) {
     try {
         const iq = xml(
@@ -859,6 +827,7 @@ async function requestUploadSlot(client, filename, size) {
     fetch = module.default;
 })();
 
+// Function to send file
 async function sendFile(contactJID, filePath) {
     try {
         if (!fetch) {
@@ -931,6 +900,7 @@ function chatRoomsMenu() {
     });
 }
 
+// Function to create a chat room
 async function createChatRoom() {
     prompt('Enter the name of the chat room you want to create (e.g., "myroom"): ', async (roomName) => {
         if (roomName) {
@@ -941,6 +911,10 @@ async function createChatRoom() {
                 xml('x', { xmlns: 'http://jabber.org/protocol/muc' })
             ));
             console.log(`Chat room "${roomName}" created and joined successfully!`);
+
+            // Configure the room
+            await configureChatRoom(roomJID);
+
             // Store the joined chat room in the JSON file
             let joinedChatRooms = [];
             try {
@@ -959,6 +933,7 @@ async function createChatRoom() {
     });
 }
 
+// Function to list previously joined chat rooms
 function listJoinedChatRooms() {
     try {
         const data = fs.readFileSync('joinedChatRooms.json', 'utf8');
@@ -980,6 +955,7 @@ function listJoinedChatRooms() {
     chatRoomsMenu();
 }
 
+// Function to leave a previously joined chat room
 function leaveChatRoom() {
     try {
         const data = fs.readFileSync('joinedChatRooms.json', 'utf8');
@@ -1019,6 +995,7 @@ function leaveChatRoom() {
     }
 }
 
+// Function to join a chat room
 function joinChatRoom() {
     console.log("\nJoin Chat Room Menu:");
     console.log("1. Join existing chat room");
@@ -1063,6 +1040,43 @@ function joinChatRoom() {
     });
 }
 
+// Function to create a chat room with specific settings
+async function configureChatRoom(roomJID) {
+    // Send an IQ stanza to request the room configuration form
+    const configFormRequest = xml(
+        'iq',
+        { type: 'get', to: roomJID, id: 'config1' },
+        xml('query', { xmlns: 'http://jabber.org/protocol/muc#owner' })
+    );
+    await xmpp.send(configFormRequest);
+
+    // In the stanza event handler, look for the response to the configuration form request
+    xmpp.on('stanza', async (stanza) => {
+        if (stanza.is('iq') && stanza.attrs.id === 'config1') {
+            // Create a submit form with the desired configuration
+            const configSubmitForm = xml(
+                'iq',
+                { type: 'set', to: roomJID, id: 'config2' },
+                xml(
+                    'query',
+                    { xmlns: 'http://jabber.org/protocol/muc#owner' },
+                    xml(
+                        'x',
+                        { xmlns: 'jabber:x:data', type: 'submit' },
+                        xml('field', { var: 'FORM_TYPE', type: 'hidden' }, xml('value', {}, 'http://jabber.org/protocol/muc#roomconfig')),
+                        xml('field', { var: 'muc#roomconfig_publicroom' }, xml('value', {}, '1')),
+                        xml('field', { var: 'muc#roomconfig_membersonly' }, xml('value', {}, '0')),
+                        xml('field', { var: 'muc#roomconfig_moderatedroom' }, xml('value', {}, '0'))
+                    )
+                )
+            );
+            // Send the configuration form
+            await xmpp.send(configSubmitForm);
+        }
+    });
+}
+
+// Function to join a chat room with the room JID
 function joinSpecifiedRoom(roomName) {
     const roomJID = roomName + '@conference.alumchat.xyz';
 
@@ -1103,6 +1117,7 @@ function joinSpecifiedRoom(roomName) {
     });
 }
 
+// Function to be able to send messages in chat rooms
 function chatInRoom(roomName) {
     const roomJID = roomName + '@conference.alumchat.xyz';
 
@@ -1145,7 +1160,35 @@ function chatInRoom(roomName) {
     });
 }
 
+// Notifications Menu
+function notificationsMenu() {
+    console.log("\nNotifications Menu:");
+    console.log("1. View notifications");
+    console.log("2. Mute/unmute notifications");
+    console.log("3. Delete all notifications");
+    console.log("4. Back to main menu");
 
+    prompt('Choose an option (1-4): ', (answer) => {
+        switch (answer) {
+            case '1':
+                viewNotifications();
+                break;
+            case '2':
+                toggleMuteNotifications();
+                break;
+            case '3':
+                deleteNotifications();
+                break;
+            case '4':
+                loggedInMenu();
+                break;
+            default:
+                console.log("Invalid option.");
+                notificationsMenu();
+                break;
+        }
+    });
+}
 
 //**********************************************/
 //**************** EXIT SECTION ****************/
