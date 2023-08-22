@@ -217,6 +217,11 @@ function loginExistingUser() {
     xmpp.on('online', async (jid) => {
         clearTimeout(timeoutID);
         console.log(`Logged in as ${jid.toString()}`);
+        // Ensure the "Incoming Files" directory exists
+        const savePath = path.join(__dirname, 'Incoming Files');
+        if (!fs.existsSync(savePath)) {
+            fs.mkdirSync(savePath);
+        }
         loggedInMenu();
 
         // Start a notification interval when the user logs in
@@ -260,12 +265,21 @@ function loginExistingUser() {
                         console.log(`${nickname}: ${body}`);
                     }
 
-                    if (body.startsWith('File available at:')) {
+                    if (body.startsWith('File sent:')) {
+                        const parts = body.split(':');
+                        const filename = parts[1];
+                        const fileBase64 = parts.slice(2).join(':');
+                        const fileData = Buffer.from(fileBase64, 'base64');
+                        const filePath = path.join(savePath, filename);
+                        fs.writeFileSync(filePath, fileData);
+
+                        console.log(`Received file "${filename}" from ${sender} and saved to "${filePath}"`);
+
                         // Add a new notification for the file transfer
                         notifications.push({
                             type: 'file transfer',
                             sender: sender,
-                            text: body,
+                            text: `Received file "${filename}" from ${sender} and saved to "${filePath}"`,
                             timestamp: new Date()
                         });
                     } else {
@@ -1186,35 +1200,33 @@ async function sendFileUrl(to, url) {
 }
 
 // Function to send file and debug steps
-async function sendFile(to, filename, fileData, contentType) {
-    const filesize = fileData.length;
-    console.log(`Requesting upload slot for ${filename} (${filesize} bytes)`);
-    const { putUrl, getUrl } = await requestUploadSlot(filename, filesize);
-    console.log(`Received upload slot. Put URL: ${putUrl}, Get URL: ${getUrl}`);
-    console.log(`Uploading file ${filename} to ${putUrl}`);
-    await uploadFile(putUrl, fileData, filename, contentType);
-    console.log(`File uploaded successfully. Sending file URL to ${to}`);
-    await sendFileUrl(to, getUrl);
-    console.log(`File "${filename}" sent to ${to} successfully!`);
+async function sendFile(to, filePath) {
+    const file = fs.readFileSync(filePath);
+    const f64 = file.toString('base64');
+    const fname = path.basename(filePath);
+    const message = xml(
+        'message',
+        { type: 'chat', to: to },
+        xml('body', {}, `File sent: ${fname}:${f64}`)
+    );
+    await xmpp.send(message);
+    console.log(`File "${fname}" sent to ${to}!`);
 }
 
 // Submenu for sending files
-function sendFileMenu() {
+async function sendFileMenu() {
     prompt('Enter the recipient JID: ', async (to) => {
         if (to) {
-            if (!to.endsWith('@alumchat.xyz')) {
-                to = to + '@alumchat.xyz';
-            }
             prompt('Enter the local file path (e.g., file:///path/to/file.txt): ', async (filePath) => {
                 if (filePath) {
                     try {
-                        // Remove the "file://" prefix if present
-                        const cleanedFilePath = filePath.replace(/^file:\/\//, '');
-                        const fileData = fs.readFileSync(cleanedFilePath);
-                        const filename = cleanedFilePath.split('/').pop();
+                        // Append the domain to the user input
+                        const completeJID = to.includes('@') ? to : `${to}@alumchat.xyz`;
+                        const fileData = fs.readFileSync(filePath);
+                        const filename = filePath.split(path.sep).pop();
                         const contentType = 'application/octet-stream'; // You can set the correct content type based on the file extension
-                        await sendFile(to, filename, fileData, contentType);
-                        console.log(`File "${filename}" sent to ${to} successfully!`);
+                        await sendFile(completeJID, filePath);
+                        console.log(`File "${filename}" sent to ${completeJID} successfully!`);
                     } catch (error) {
                         console.log(`Error sending file: ${error.message}`);
                     }
@@ -1229,7 +1241,6 @@ function sendFileMenu() {
         }
     });
 }
-
 
 //**********************************************/
 //**************** EXIT SECTION ****************/
