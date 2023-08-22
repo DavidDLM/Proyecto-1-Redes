@@ -21,6 +21,15 @@ const joinedChatRooms = []; // Define a global array to keep track of the chat r
 let messageListenerAdded = false;
 let isMuted = false;
 
+async function initializeFetch() {
+    fetch = (await import('node-fetch')).default;
+}
+
+initializeFetch().then(() => {
+
+});
+
+
 const readlineInterface = rl.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -157,7 +166,7 @@ function cleanupListeners() {
 //*************** LOGIN SECTION ****************/
 
 function loginExistingUser() {
-    console.log("Logging in existing user...");
+    console.log("Logging in existing user");
 
     if (xmpp && (xmpp.status === 'online' || xmpp.status === 'connecting')) {
         console.log('You are already logged in or connecting.');
@@ -251,40 +260,27 @@ function loginExistingUser() {
                         console.log(`${nickname}: ${body}`);
                     }
 
-                    // Add a new notification for the chat message
-                    notifications.push({
-                        type: 'message',
-                        sender: sender,
-                        text: body,
-                        timestamp: new Date()
-                    });
-                }
-
-                // Handle incoming file transfer messages
-                const x = stanza.getChild('x', 'jabber:x:oob');
-                if (x && x.getChild('url')) {
-                    const url = x.getChild('url').text();
-                    const fileName = url.split('/').pop();
-
-                    console.log(`Received file URL: ${url}`);
-                    try {
-                        await downloadFile(url, `./downloads/${fileName}`);
-                        console.log(`File downloaded to ./downloads/${fileName}`);
-
+                    if (body.startsWith('File available at:')) {
                         // Add a new notification for the file transfer
                         notifications.push({
                             type: 'file transfer',
                             sender: sender,
-                            text: `Received a file: ${fileName}`,
-                            timestamp: new Date(),
-                            fileUrl: url,
+                            text: body,
+                            timestamp: new Date()
                         });
-                    } catch (err) {
-                        console.error(`Failed to download file: ${err.message}`);
+                    } else {
+                        // Add a new notification for the chat message
+                        notifications.push({
+                            type: 'message',
+                            sender: sender,
+                            text: body,
+                            timestamp: new Date()
+                        });
                     }
                 }
             }
         });
+
     });
     xmpp.start().catch(console.error);
 }
@@ -334,11 +330,7 @@ function loggedInMenu() {
                 notificationsMenu(); // Updated action
                 break;
             case '7':
-                prompt('Enter the contact JID to send the file to: ', (contactJID) => {
-                    prompt('Enter the file path: ', (filePath) => {
-                        sendFile(contactJID, filePath);
-                    });
-                });
+                sendFileMenu(); // Call the new function here
                 break;
             case '8':
                 deleteAccount();
@@ -386,7 +378,7 @@ function chatMenuOptions(option) {
 
 // Chat with contact
 function chatWithContact() {
-    prompt("Enter the JID or name of the contact you want to chat with: ", (contactJID) => {
+    prompt("Enter the contact JID you want to chat with: ", (contactJID) => {
         startChat(`${contactJID}@alumchat.xyz`);
     });
 }
@@ -655,7 +647,7 @@ function manageSubscriptions() {
     prompt("Choose an option (1-5): ", (answer) => {
         switch (answer) {
             case '1':
-                prompt("JID of the user you wish to add: ", (anyJID) => {
+                prompt("Enter the JID of the user you wish to add: ", (anyJID) => {
                     sendFriendRequest(anyJID)
                         .then(() => {
                             console.log(`Friend request sent to ${anyJID}@alumchat.xyz`);
@@ -675,7 +667,7 @@ function manageSubscriptions() {
                     console.log("Received friend requests: ", subscriptions);
                     prompt("Do you want to accept any request? (yes/no): ", (answer) => {
                         if (answer.toLowerCase() === 'yes') {
-                            prompt("Enter the name of the person you want to accept: ", (userRequest) => {
+                            prompt("Enter the JID of the person you want to accept: ", (userRequest) => {
                                 acceptFriendRequest(userRequest)
                                     .then(() => {
                                         console.log(`Accepted friend request from: ${userRequest}@alumchat.xyz`);
@@ -692,7 +684,7 @@ function manageSubscriptions() {
                 }
                 break;
             case '3':
-                prompt("JID of the user you wish to delete: ", (anyJID) => {
+                prompt("Enter the JID of the user you wish to delete: ", (anyJID) => {
                     deleteContact(anyJID)
                         .then(() => {
                             console.log(`You have removed ${anyJID}@alumchat.xyz from your contacts.`);
@@ -706,7 +698,7 @@ function manageSubscriptions() {
                 break;
             case '4':
                 console.log("Provide details for the contact.");
-                prompt("Provide the JID or name of the contact: ", (queriedJID) => {
+                prompt("Enter the JID or name of the contact: ", (queriedJID) => {
                     initiateRosterRequest(queriedJID);
                 });
                 break;
@@ -799,71 +791,6 @@ function deleteNotifications() {
     notifications = [];
     console.log('All notifications have been deleted.');
     notificationsMenu();
-}
-
-// Function to request a slot for uploading a file
-async function requestUploadSlot(client, filename, size) {
-    try {
-        const iq = xml(
-            'iq',
-            { type: 'set' },
-            xml('request', { xmlns: 'urn:xmpp:http:upload:0', filename, size })
-        );
-
-        const result = await client.iqCaller.request(iq);
-        const slot = result.getChild('slot', 'urn:xmpp:http:upload:0');
-        const putUrl = slot.getChildText('put');
-        const getUrl = slot.getChildText('get');
-
-        return { putUrl, getUrl };
-    } catch (error) {
-        console.error('Error requesting upload slot:', error);
-        throw error;
-    }
-}
-// C:\Users\Gamer\Documents\archivo.txt
-(async function () {
-    const module = await import('node-fetch');
-    fetch = module.default;
-})();
-
-// Function to send file
-async function sendFile(contactJID, filePath) {
-    try {
-        if (!fetch) {
-            throw new Error('Fetch not initialized yet. Please try again later.');
-        }
-
-        const data = await fs.promises.readFile(filePath);
-        const fileName = path.basename(filePath);
-
-        // Request an upload slot from the XMPP server
-        const slot = await requestUploadSlot(client, fileName, data.length);
-        const putUrl = slot.putUrl;
-        const getUrl = slot.getUrl;
-
-        // Upload the file to the provided URL
-        await fetch(putUrl, {
-            method: 'PUT',
-            body: data,
-            headers: { 'Content-Type': 'application/octet-stream' },
-        });
-
-        // Share the URL of the uploaded file with the recipient
-        const message = xml(
-            'message',
-            { to: contactJID, type: 'chat' },
-            xml('body', {}, `Download the file here: ${getUrl}`),
-            xml('x', { xmlns: 'jabber:x:oob' }, xml('url', {}, getUrl), xml('desc', {}, `File: ${fileName}`))
-        );
-
-        await client.send(message);
-        console.log('File sent successfully.');
-    } catch (error) {
-        console.error('Error sending the file:', error);
-    }
-
-    loggedInMenu();
 }
 
 // Chat rooms menu
@@ -1189,6 +1116,120 @@ function notificationsMenu() {
         }
     });
 }
+
+// Request upload slot to the server
+async function requestUploadSlot(filename, filesize) {
+    const iq = xml(
+        'iq',
+        { type: 'get', id: 'upload_request' },
+        xml(
+            'request',
+            { xmlns: 'urn:xmpp:http:upload:0', filename: filename, size: filesize }
+        )
+    );
+
+    console.log('Sending IQ request for upload slot:', iq.toString());
+
+    try {
+
+        const result = await new Promise((resolve, reject) => {
+            xmpp.send(iq, (error, response) => {
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+
+        console.log('Received IQ response:', result.toString());
+
+        const slot = result.getChild('slot', 'urn:xmpp:http:upload:0');
+        if (!slot) {
+            throw new Error('No slot element found in the server response');
+        }
+
+        return {
+            putUrl: slot.getChildText('put'),
+            getUrl: slot.getChildText('get')
+        };
+    } catch (error) {
+        console.error('Error requesting upload slot:', error.message);
+        throw error;
+    }
+}
+
+// Upload file URL
+async function uploadFile(url, fileData, filename, contentType) {
+    const response = await fetch(url, {
+        method: 'PUT',
+        body: fileData,
+        headers: {
+            'Content-Type': contentType
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to upload file: ${response.statusText}`);
+    }
+}
+
+// Send file URL
+async function sendFileUrl(to, url) {
+    const message = xml(
+        'message',
+        { type: 'chat', to: to },
+        xml('body', {}, `File available at: ${url}`)
+    );
+
+    await xmpp.send(message);
+}
+
+// Function to send file and debug steps
+async function sendFile(to, filename, fileData, contentType) {
+    const filesize = fileData.length;
+    console.log(`Requesting upload slot for ${filename} (${filesize} bytes)`);
+    const { putUrl, getUrl } = await requestUploadSlot(filename, filesize);
+    console.log(`Received upload slot. Put URL: ${putUrl}, Get URL: ${getUrl}`);
+    console.log(`Uploading file ${filename} to ${putUrl}`);
+    await uploadFile(putUrl, fileData, filename, contentType);
+    console.log(`File uploaded successfully. Sending file URL to ${to}`);
+    await sendFileUrl(to, getUrl);
+    console.log(`File "${filename}" sent to ${to} successfully!`);
+}
+
+// Submenu for sending files
+function sendFileMenu() {
+    prompt('Enter the recipient JID: ', async (to) => {
+        if (to) {
+            if (!to.endsWith('@alumchat.xyz')) {
+                to = to + '@alumchat.xyz';
+            }
+            prompt('Enter the local file path (e.g., file:///path/to/file.txt): ', async (filePath) => {
+                if (filePath) {
+                    try {
+                        // Remove the "file://" prefix if present
+                        const cleanedFilePath = filePath.replace(/^file:\/\//, '');
+                        const fileData = fs.readFileSync(cleanedFilePath);
+                        const filename = cleanedFilePath.split('/').pop();
+                        const contentType = 'application/octet-stream'; // You can set the correct content type based on the file extension
+                        await sendFile(to, filename, fileData, contentType);
+                        console.log(`File "${filename}" sent to ${to} successfully!`);
+                    } catch (error) {
+                        console.log(`Error sending file: ${error.message}`);
+                    }
+                } else {
+                    console.log('File path cannot be empty.');
+                }
+                loggedInMenu();
+            });
+        } else {
+            console.log('Recipient JID cannot be empty.');
+            loggedInMenu();
+        }
+    });
+}
+
 
 //**********************************************/
 //**************** EXIT SECTION ****************/
